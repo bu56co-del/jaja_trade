@@ -1,0 +1,5 @@
+application/
+evidence/
+__pycache__/
+*.pyc
+.env
