@@ -1,0 +1,87 @@
+name: Issue 1 bounded strategy research
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths:
+      - 'research/**'
+      - '.github/workflows/issue1-research.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: issue1-research-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  research:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: ${{ github.workspace }}/application:${{ github.workspace }}/application/tests:${{ github.workspace }}/research
+    steps:
+      - name: Checkout run commit without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore exact original public evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: backtest-35452535157-1
+          run-id: '35452535157'
+          github-token: ${{ github.token }}
+          path: baseline-evidence
+      - name: Unpack and preserve unchanged original source
+        run: |
+          python3 bootstrap.py
+          cp -R application evidence/original-source
+          cp -R research evidence/research-source
+          cp -R baseline-evidence evidence/baseline
+      - name: Original 210 software regression tests
+        id: original_tests
+        run: timeout --signal=TERM --kill-after=10s 480s python3 -m unittest discover -s application/tests -v 2>&1 | tee evidence/original-tests.log
+      - name: New independent-audit and strategy tests
+        id: new_tests
+        run: timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s research/tests -v 2>&1 | tee evidence/new-tests.log
+      - name: Verify data, develop two bounded rounds, then evaluate sealed selection
+        id: experiment
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 720s python3 research/run.py --baseline baseline-evidence --application application --out evidence/research 2>&1 | tee evidence/research.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Show this run's actual status
+        if: always()
+        env:
+          EXPERIMENT_OUTCOME: ${{ steps.experiment.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path('evidence/research')
+          text='# Research did not complete; no validated result.\n'
+          if os.environ.get('EXPERIMENT_OUTCOME')=='success' and (root/'provenance.json').is_file():
+              provenance=json.loads((root/'provenance.json').read_text())
+              if provenance['github_sha']==os.environ['GITHUB_SHA'] and provenance['github_run_id']==os.environ['GITHUB_RUN_ID']:
+                  if (root/'REPORT.md').is_file():
+                      text=(root/'REPORT.md').read_text()
+                  elif (root/'status.json').is_file():
+                      text='# Research status\n```json\n'+(root/'status.json').read_text()+'\n```\n'
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(text)
+          print(text[:24000])
+          PY
+      - name: Preserve all results, failures, raw data and exact source
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: issue1-research-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 14
+          if-no-files-found: warn
