@@ -4,6 +4,7 @@ on:
     branches: [research/issue-1-chat-actions]
     paths:
       - 'data_audit/chainticks_check.py'
+      - 'data_audit/chainticks_followup.py'
       - '.github/workflows/chainticks-audit.yml'
 permissions:
   contents: read
@@ -23,7 +24,9 @@ jobs:
         with:
           persist-credentials: false
       - name: Check bounded public-data parsing and validation
-        run: python3 data_audit/chainticks_check.py --self-test
+        run: |
+          python3 data_audit/chainticks_check.py --self-test
+          python3 data_audit/chainticks_followup.py --self-test
       - name: Install a pinned free Parquet decoder in a disposable environment
         run: |
           python3 -m venv .audit-venv
@@ -42,12 +45,12 @@ jobs:
           assert result['parquet_rows']==2 and result['eth_rows']==1 and result['invalid_counts']=={}
           print('PARQUET_SYNTHETIC_SMOKE=PASS_NOT_MARKET_EVIDENCE')
           PY
-      - name: Inventory all dates and decode selected real ETH rows
+      - name: Resolve observed funding and adjacent-day coverage anomalies
         run: |
           nonce="$(python3 -c 'import uuid;print(uuid.uuid4())')"
           echo "::stop-commands::$nonce"
           set +e
-          timeout --signal=TERM --kill-after=5s 720s .audit-venv/bin/python -u data_audit/chainticks_check.py
+          timeout --signal=TERM --kill-after=5s 720s .audit-venv/bin/python -u data_audit/chainticks_followup.py
           result=$?
           set -e
           echo "::$nonce::"
