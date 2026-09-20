@@ -11,9 +11,6 @@ from chainticks_check import Client, ROOT, REPO, MIB, PATTERN, decode, timestamp
 REVISION='54b07b4bebc5574a065d3fbf4432634cf9148f50'
 BASE=ROOT+'/datasets/'+REPO+'/resolve/'+REVISION+'/'
 FIELDS=('coin','type','time','funding','funding_rate','cum_funding','unclamped_funding','mark_px','oracle_px')
-TARGETS=(('funding',('2023-05-20','2026-02-02','2026-08-11')),
-         ('trades',('2026-01-28','2026-07-28')),
-         ('markets',('2026-08-11',)))
 
 
 def dec(v):
@@ -136,6 +133,25 @@ def entries(manifest):
     return [{'path':x} if isinstance(x,str) else x for x in fs]
 
 
+def select_targets(bykind):
+    """Select only existing dates; never guess a date from another data category."""
+    selected=[]
+    for kind in ('funding','trades','markets'):
+        days=sorted(bykind[kind])
+        if not days:
+            continue
+        # Prefer whole-day samples when at most two physical shards exist.
+        eligible=[d for d in days if len(bykind[kind][d])<=2] or days
+        indexes=(0,len(eligible)//2,len(eligible)-1) if kind=='funding' else (0,len(eligible)-1) if kind=='trades' else (len(eligible)-1,)
+        for day in sorted({eligible[j] for j in indexes}):
+            paths=sorted(bykind[kind][day])
+            picks=paths if len(paths)<=2 else [paths[0],paths[-1]]
+            for path in picks:
+                selected.append((kind,day,path,len(paths),len(picks)==len(paths)))
+    require(len(selected)<=12,'Follow-up sample cap')
+    return selected
+
+
 def main():
     c=Client()
     manifest,me=c.json(BASE+'_manifest.json')
@@ -145,21 +161,15 @@ def main():
     require(all(isinstance(p,str) for p in filepaths) and len(filepaths)==len(set(filepaths)), 'Invalid/duplicate manifest paths')
     bykind, inv=inventory(filepaths)
     emit('FOLLOWUP_MANIFEST',{'revision':REVISION,'evidence':me,'entry_count':len(es),
-        'file_entry_example':es[0],'inventory_recomputed_from_manifest':inv,
+        'file_entry_example':es[0],'inventory_recomputed_from_manifest':{k:{x:y for x,y in v.items() if x!='date_runs'} for k,v in inv.items()},
         'manifest_row_counts_all_symbols_unverified':manifest.get('row_counts'),
         'manifest_time_ranges':manifest.get('time_ranges'),
         'no_per_file_row_count_assumed':True})
-    selected=[]
-    for kind,dates in TARGETS:
-        for day in dates:
-            paths=bykind[kind].get(day,[])
-            require(paths,'Expected day absent: '+kind+' '+day)
-            require(len(paths)<=4,'Target day exceeds bounded follow-up part count')
-            for p in sorted(paths):selected.append((kind,day,p,len(paths)))
-    require(len(selected)<=12,'Follow-up sample cap')
+    selected=select_targets(bykind)
+    emit('FOLLOWUP_SELECTED_EXISTING_PATHS',selected)
     status=[]
-    for kind,day,p,n in selected:
-        item={'kind':kind,'date':day,'path':p,'parts_for_date':n,'all_day_parts_selected':True}
+    for kind,day,p,n,all_parts in selected:
+        item={'kind':kind,'date':day,'path':p,'parts_for_date':n,'all_day_parts_selected':all_parts}
         try:
             raw,ev=c.get(BASE+urllib.parse.quote(p,safe='/='),96*MIB)
             item['evidence']=ev
@@ -168,6 +178,8 @@ def main():
                 result=decode(raw,kind,day);result.pop('examples',None)
                 item.update(result)
                 item['minute_coverage']=read_minutes(raw,day)
+                for coverage in ('ETH','all_symbols'):
+                    item['minute_coverage'][coverage].pop('presence_1440_bits',None)
             item['status']='DECODED'
         except Exception as exc:
             item.update(status='NOT_DECODED',error_type=type(exc).__name__)
@@ -180,6 +192,19 @@ def main():
 
 
 class Tests(unittest.TestCase):
+    def test_selection_only_existing_dates(self):
+        b=defaultdict(dict)
+        b['funding']={'2024-01-03':['a'],'2024-06-02':['b'],'2025-04-15':['c']}
+        b['trades']={'2025-01-07':['t0','t1'],'2025-06-05':['t2']}
+        picks=select_targets(b)
+        self.assertEqual(len(picks),6)
+        self.assertTrue(all(d in b[k] and path in b[k][d] for k,d,path,n,full in picks))
+        self.assertTrue(all(full for k,d,path,n,full in picks))
+    def test_selection_marks_partial(self):
+        b=defaultdict(dict);b['trades']={'2025-01-01':['t0','t1','t2']}
+        picks=select_targets(b)
+        self.assertEqual(len(picks),2)
+        self.assertTrue(all(not full for k,d,path,n,full in picks))
     def test_detect_raw_funding_rate(self):
         r=funding_rows([{'symbol':'ETH','funding_rate':0,'raw_json':'{"funding_rate":"0.00001"}'}])
         self.assertEqual(r['counts']['normal_diff_raw_funding_rate'],1)
