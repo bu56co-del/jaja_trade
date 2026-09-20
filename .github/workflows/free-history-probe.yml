@@ -33,7 +33,9 @@ jobs:
           MIB = 1024 * 1024
           ALLOWED = frozenset({
               'huggingface.co', 'cdn-lfs.huggingface.co', 'cdn-lfs-us-1.hf.co',
-              'cas-bridge.xethub.hf.co', 'api.tardis.dev', 'datasets.tardis.dev'
+              'cas-bridge.xethub.hf.co', 'api.tardis.dev', 'datasets.tardis.dev',
+              # Exact current CDN hosts documented at https://huggingface.co/docs/hub/datasets-downloading
+              'us.aws.cdn.hf.co', 'us.gcp.cdn.hf.co'
           })
           HF = 'https://huggingface.co'
           REPO = 'Chainticks/perp-data'
@@ -118,7 +120,7 @@ jobs:
               require(files, 'Public file inventory unavailable')
               result = {'status': 'METADATA_DOWNLOADED', 'dataset': REPO, 'revision': sha,
                         'metadata_evidence': meta_evidence, 'inventory_file_count': len(files),
-                        'license_from_card': info.get('cardData', {}).get('license'),
+                        'license_from_card': (info.get('cardData') or {}).get('license'),
                         'top_level_entries': sorted({x.split('/')[0] for x in files})[:30]}
               base = HF + '/datasets/' + REPO + '/resolve/' + sha + '/'
               for name in ('_manifest.json', '_schema.json'):
