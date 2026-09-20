@@ -1,0 +1,93 @@
+name: Mixed-strategy bounded research
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths:
+      - 'mix_research/**'
+      - '.github/workflows/mixed-research.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: mixed-research-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  mixed:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: ${{ github.workspace }}/application:${{ github.workspace }}/application/tests:${{ github.workspace }}/research:${{ github.workspace }}/book_research:${{ github.workspace }}/mix_research
+    steps:
+      - name: Checkout exact research commit without persisted credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore exact prior public evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: books-35481147529-1
+          run-id: '35481147529'
+          github-token: ${{ github.token }}
+          path: previous-evidence
+      - name: Verify original source and preserve all inputs
+        run: |
+          python3 bootstrap.py
+          cp -R application evidence/original-source
+          cp -R research evidence/previous-research-source
+          cp -R book_research evidence/book-source
+          cp -R mix_research evidence/mix-source
+          cp -R previous-evidence evidence/previous
+          cp .github/workflows/mixed-research.yml evidence/workflow.yml
+      - name: Original software regressions
+        run: timeout --signal=TERM --kill-after=10s 300s python3 -m unittest discover -s application/tests -v 2>&1 | tee evidence/original-tests.log
+      - name: Previous research regressions
+        run: timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s research/tests -v 2>&1 | tee evidence/previous-tests.log
+      - name: Book strategy and causal-audit tests - synthetic fixtures only
+        run: timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s book_research/tests -v 2>&1 | tee evidence/book-tests.log
+      - name: Mixed strategy regression tests - synthetic fixtures only
+        run: timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s mix_research/tests -v 2>&1 | tee evidence/mixed-tests.log
+      - name: Test all frozen combinations and unchanged controls
+        id: experiment
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 960s python3 mix_research/run_mix.py --previous previous-evidence --application application --out evidence/mix 2>&1 | tee evidence/mixed-research.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Show only this run's result
+        if: always()
+        env:
+          EXPERIMENT_OUTCOME: ${{ steps.experiment.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path('evidence/mix')
+          text='# No completed validated result.\n'
+          if os.environ.get('EXPERIMENT_OUTCOME')=='success' and (root/'provenance.json').is_file():
+              p=json.loads((root/'provenance.json').read_text())
+              if (p['github_sha']==os.environ['GITHUB_SHA'] and p['github_run_id']==os.environ['GITHUB_RUN_ID']
+                  and p['github_run_attempt']==os.environ['GITHUB_RUN_ATTEMPT']):
+                  if (root/'REPORT.md').is_file():
+                      text=(root/'REPORT.md').read_text()
+                  elif (root/'status.json').is_file():
+                      text='# Status\n```json\n'+(root/'status.json').read_text()+'\n```\n'
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(text)
+          print(text[:24000])
+          PY
+      - name: Retain full evidence including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mixed-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 14
+          if-no-files-found: warn
