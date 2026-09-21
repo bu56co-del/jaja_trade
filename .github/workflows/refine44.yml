@@ -1,0 +1,129 @@
+name: A44 full-coverage BB short filter research
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths: ['refine44/**', '.github/workflows/refine44.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: refine44-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: ${{ github.workspace }}/application:${{ github.workspace }}/application/tests:${{ github.workspace }}/longer:${{ github.workspace }}/execution:${{ github.workspace }}/reversal44:${{ github.workspace }}/alternatives44:${{ github.workspace }}/mean44:${{ github.workspace }}/direction44:${{ github.workspace }}/refine44
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore verified original account source and preserve tested code
+        run: |
+          python3 bootstrap.py
+          mkdir -p test-evidence
+          cp -R application test-evidence/original-source
+          cp -R refine44 test-evidence/refine44-source
+          cp .github/workflows/refine44.yml test-evidence/workflow.yml
+      - name: Original account and relevant unchanged parent regressions
+        run: |
+          timeout 300s python3 -m unittest discover -s application/tests -v 2>&1 | tee test-evidence/account-tests.log
+          timeout 120s python3 -m unittest discover -s mean44/tests -v 2>&1 | tee test-evidence/mean-tests.log
+          timeout 120s python3 -m unittest discover -s direction44/tests -v 2>&1 | tee test-evidence/direction-tests.log
+      - name: New filters and causal accounting tests - artificial fixtures only
+        run: timeout 120s python3 -m unittest discover -s refine44/tests -v 2>&1 | tee test-evidence/new-tests.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: refine44-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-evidence/
+          retention-days: 7
+          if-no-files-found: error
+  research:
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        group: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore fixed prior A44 data and complete base account results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: direction44-final-35599128691-1
+          run-id: '35599128691'
+          github-token: ${{ github.token }}
+          path: parent
+      - run: python3 bootstrap.py
+      - name: Replay every assigned definition on all27 true contiguous blocks
+        env:
+          GROUP: ${{ matrix.group }}
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1380s python3 refine44/run_refine.py --group "$GROUP" --parent parent --out output 2>&1 | tee run.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: refine44-group-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/
+            run.log
+          retention-days: 7
+          if-no-files-found: error
+  combine:
+    needs: research
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 bootstrap.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: refine44-group-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: groups
+      - name: Require all1296 cases and all44 calendar dates
+        run: |
+          mkdir flat-groups
+          for d in groups/*; do cp -R "$d/output" "flat-groups/$(basename "$d")"; done
+          python3 refine44/run_refine.py --combine flat-groups --out results 2>&1 | tee combine.log
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: refine44-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tests
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: direction44-final-35599128691-1
+          run-id: '35599128691'
+          github-token: ${{ github.token }}
+          path: parent
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: refine44-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            groups/
+            results/
+            tests/
+            parent/
+            combine.log
+          retention-days: 7
+          if-no-files-found: error
