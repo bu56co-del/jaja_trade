@@ -1,0 +1,149 @@
+name: A44 recovery and dynamic exit research
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths:
+      - 'mean44/**'
+      - '.github/workflows/mean44.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: mean44-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: application:application/tests:research:book_research:mix_research:sweep:longer:execution:reversal44:profit44:alternatives44:mean44
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore original source and preserve reviewed code
+        run: |
+          python3 bootstrap.py
+          mkdir -p test-evidence
+          cp -R application test-evidence/original-source
+          cp -R longer test-evidence/native-source
+          cp -R execution test-evidence/execution-source
+          cp -R reversal44 test-evidence/reversal44-source
+          cp -R profit44 test-evidence/profit44-source
+          cp -R alternatives44 test-evidence/alternatives44-source
+          cp -R mean44 test-evidence/mean44-source
+          cp evidence/source-manifest.json test-evidence/
+          cp .github/workflows/mean44.yml test-evidence/workflow.yml
+      - name: Prior 629 software regressions
+        run: |
+          for folder in application research book_research mix_research sweep longer execution reversal44 profit44 alternatives44; do
+            timeout --signal=TERM --kill-after=10s 300s python3 -m unittest discover -s "$folder/tests" -v 2>&1 | tee -a test-evidence/prior-tests.log
+          done
+      - name: New recovery and dynamic-exit tests - artificial fixtures only
+        run: timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s mean44/tests -v 2>&1 | tee test-evidence/new-tests.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: mean44-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-evidence/
+          retention-days: 7
+          if-no-files-found: warn
+  research:
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        group: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore fixed A44 input and the preceding public-method results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: alternatives44-final-35560801424-1
+          run-id: '35560801424'
+          github-token: ${{ github.token }}
+          path: previous
+      - name: Restore unchanged accounting engine
+        run: python3 bootstrap.py
+      - name: Compare all assigned definitions on the 27 actual contiguous episodes
+        env:
+          RESEARCH_GROUP: ${{ matrix.group }}
+        run: |
+          mkdir -p run-evidence
+          nonce="$(python3 -c 'import uuid;print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1380s python3 mean44/run_mean.py --group "$RESEARCH_GROUP" --previous previous --out run-evidence/results 2>&1 | tee run-evidence/run.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Preserve all computed cases or failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mean44-group-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: run-evidence/
+          retention-days: 7
+          if-no-files-found: error
+  combine:
+    needs: [tests, research]
+    if: ${{ always() && needs.tests.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 bootstrap.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: mean44-group-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: groups
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: mean44-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tests
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: alternatives44-final-35560801424-1
+          run-id: '35560801424'
+          github-token: ${{ github.token }}
+          path: previous
+      - name: Require all 2700 cases and matching run identity before reporting
+        run: |
+          mkdir -p normalized-groups
+          for folder in groups/*; do
+            cp -R "$folder/results" "normalized-groups/$(basename "$folder")"
+          done
+          python3 mean44/run_mean.py --combine normalized-groups --out results 2>&1 | tee combine.log
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads(Path('results/SUMMARY.json').read_text())
+          assert all(s['provenance'][k]==os.environ[k] for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT'))
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text('# A44 recovery and dynamic-exit research\n\n```json\n'+json.dumps(s,indent=2)+'\n```\n')
+          PY
+      - name: Preserve complete evidence including source market aggregates
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: mean44-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            results/
+            groups/
+            tests/
+            previous/
+            combine.log
+          retention-days: 7
+          if-no-files-found: error
