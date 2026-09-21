@@ -37,6 +37,7 @@ def reference(block, spec):
                 if pr<=10 and r-10>epsilon:d=1
                 elif pr>=90 and 90-r>epsilon:d=-1
             else:raise ValueError('Reference family')
+            if spec['family']=='BB_REENTRY' and (c<lo+epsilon or c>hi-epsilon):d=0
             if d*(c-agg[-1][0])<=epsilon or (spec['filter']=='RANGE' and er>D('.3')):d=0
             style=spec['exit']
             long=(c-ma>epsilon) if style=='SMA5' else r-70>epsilon if style=='RSI70' else False

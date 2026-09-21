@@ -50,6 +50,7 @@ def features(block,minutes):
 def entry(f,s):
     d=0
     if s['family']=='BB_REENTRY':
+        if not f['lower']+EPS <= f['close'] <= f['upper']-EPS:return 0
         if f['prior_close']<f['prior_lower']-EPS and f['close']>=f['lower']+EPS:d=1
         if f['prior_close']>f['prior_upper']+EPS and f['close']<=f['upper']-EPS:d=-1
     elif s['family']=='RSI_RECOVERY':

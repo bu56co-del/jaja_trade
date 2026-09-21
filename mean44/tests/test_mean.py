@@ -31,6 +31,8 @@ class FormulaTests(unittest.TestCase):
     def test_flat_band(self):self.assertEqual(s.band([D(3)]*40),(3,3))
     def test_population_band(self):self.assertEqual(s.band([D(1),D(3)]*10),(0,4))
     def test_bb_reentry_long(self):self.assertEqual(s.entry(node(),spec()),1)
+    def test_bb_reject_long_past_opposite_band(self):self.assertEqual(s.entry(node(close=D(103),open=D(98)),spec()),0)
+    def test_bb_reject_short_past_opposite_band(self):self.assertEqual(s.entry(node(prior_close=D(103),close=D(97),open=D(102)),spec()),0)
     def test_bb_not_recovered(self):self.assertEqual(s.entry(node(close=D(97)),spec()),0)
     def test_bb_prior_inside(self):self.assertEqual(s.entry(node(prior_close=D(99)),spec()),0)
     def test_bb_short(self):self.assertEqual(s.entry(node(prior_close=D(103),close=D(101),open=D(102)),spec()),-1)
