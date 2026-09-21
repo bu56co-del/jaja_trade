@@ -68,7 +68,7 @@ def raw_direction(f,s):
         d=1 if c<b['lower'] and f['rsi14']<30 else -1 if c>b['upper'] and f['rsi14']>70 else 0
     elif family=='BB_EXPAND':
         b,p=f['bands'][str(n)],f['prior_bands'][str(n)]
-        if b['width']>p['width'] and f['volume_ratio']>=D('1.2'):
+        if b['width']-p['width']>D('1e-12') and f['volume_ratio']>=D('1.2'):
             if c>b['upper'] and f['prev']<=p['upper'] and f['rsi14']>=55:d=1
             if c<b['lower'] and f['prev']>=p['lower'] and f['rsi14']<=45:d=-1
     elif family=='RSI_DIP':

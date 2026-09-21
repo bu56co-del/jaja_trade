@@ -68,7 +68,7 @@ def direction_reference(f,s):
         short=f['close']>f['bands'][str(n)]['upper'] and f['rsi14']>70
     elif family=='BB_EXPAND':
         current,prior=f['bands'][str(n)],f['prior_bands'][str(n)]
-        enough=current['width']>prior['width'] and f['volume_ratio']>=D('1.2')
+        enough=current['width']-prior['width']>D('1e-12') and f['volume_ratio']>=D('1.2')
         long=enough and f['prev']<=prior['upper'] and f['close']>current['upper'] and f['rsi14']>=55
         short=enough and f['prev']>=prior['lower'] and f['close']<current['lower'] and f['rsi14']<=45
     elif family=='RSI_DIP':
