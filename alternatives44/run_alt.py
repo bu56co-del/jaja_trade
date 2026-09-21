@@ -163,7 +163,7 @@ def combine(root,out):
                 n=sum(r['metrics']['trades'] for r in rr);wins=sum(r['metrics']['wins'] for r in rr)
                 total=sum((D(r['metrics']['net_usdc']) for r in rr),D(0))
                 a=dict(candidate=s['id'],family=s['family'],param=s['param'],trigger=s['trigger'],filter=s['filter'],cost=cost,path=path,
-                       trades=n,wins=w,net_win_rate=wins/n if n else None,net_sum_usdc=str(total),
+                       trades=n,wins=wins,net_win_rate=wins/n if n else None,net_sum_usdc=str(total),
                        mean_episode_return_pct=str(total/270*100),mean_net_usdc=str(total/n) if n else None,
                        positive_episodes=sum(D(r['metrics']['net_usdc'])>0 for r in rr),negative_episodes=sum(D(r['metrics']['net_usdc'])<0 for r in rr),
                        no_trade_episodes=sum(not r['trades'] for r in rr),halted_episodes=sum(bool(r['halt_reason']) for r in rr),
