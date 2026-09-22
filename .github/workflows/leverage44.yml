@@ -1,0 +1,101 @@
+name: Five-times A44 margin and position-size experiment
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths: ['leverage44/**', '.github/workflows/leverage44.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: leverage44-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: ${{ github.workspace }}/application:${{ github.workspace }}/application/tests:${{ github.workspace }}/longer:${{ github.workspace }}/execution:${{ github.workspace }}/reversal44:${{ github.workspace }}/alternatives44:${{ github.workspace }}/mean44:${{ github.workspace }}/direction44:${{ github.workspace }}/refine44:${{ github.workspace }}/entry44:${{ github.workspace }}/leverage44
+jobs:
+  research:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore exact B baseline and complete fixed A44 inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: entry44-final-35677804240-1
+          run-id: '35677804240'
+          github-token: ${{ github.token }}
+          path: parent
+      - name: Restore original source and save tested research files
+        run: |
+          python3 bootstrap.py
+          mkdir -p evidence
+          cp -R application evidence/original-source
+          cp -R leverage44 evidence/leverage44-source
+          cp .github/workflows/leverage44.yml evidence/workflow.yml
+      - name: Original account and fixed B strategy regressions
+        run: |
+          timeout 180s python3 -m unittest discover -s application/tests -v 2>&1 | tee evidence/account-tests.log
+          timeout 120s python3 -m unittest discover -s mean44/tests -v 2>&1 | tee evidence/mean-tests.log
+          timeout 120s python3 -m unittest discover -s refine44/tests -v 2>&1 | tee evidence/refine-tests.log
+          timeout 120s python3 -m unittest discover -s entry44/tests -v 2>&1 | tee evidence/entry-tests.log
+      - name: New 5x sizing and independent-account tests - artificial only
+        run: timeout 120s python3 -m unittest discover -s leverage44/tests -v 2>&1 | tee evidence/leverage-tests.log
+      - name: Replay all432 cases with socket operations denied
+        id: experiment
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1320s python3 - <<'PY' 2>&1 | tee evidence/research.log
+          import sys
+          def deny(event,args):
+              if event.startswith('socket.') or event in ('subprocess.Popen','os.system','os.posix_spawn'):
+                  raise RuntimeError('Offline research: network and child processes denied')
+          sys.addaudithook(deny)
+          import socket,ssl
+          from pathlib import Path
+          for probe in (lambda:socket.socket(),lambda:socket.getaddrinfo('localhost',80)):
+              try: probe()
+              except RuntimeError: pass
+              else: raise RuntimeError('Offline guard did not reject probe')
+          from run_leverage import run
+          raise SystemExit(run(Path('parent'),Path('results')))
+          PY
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Show only complete matching-run results
+        if: always()
+        env:
+          EXPERIMENT_OUTCOME: ${{ steps.experiment.outcome }}
+        run: |
+          python3 - <<'PY'
+          import os,json
+          from pathlib import Path
+          p=Path('results/SUMMARY.json')
+          text='# No complete verified 5x result\n'
+          if os.environ.get('EXPERIMENT_OUTCOME')=='success' and p.is_file():
+              s=json.loads(p.read_text())
+              expected={k:os.environ.get(k) for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT')}
+              if s['provenance']==expected and s['cases']==432 and s['baseline_equivalence']==108:
+                  text='# A44 5x paper risk comparison\n```json\n'+json.dumps(s,indent=2)+'\n```\n'
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(text)
+          PY
+      - name: Preserve full parent, tested code, all results and failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: leverage44-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            results/
+            evidence/
+            parent/
+          retention-days: 7
+          if-no-files-found: error
