@@ -52,12 +52,21 @@ jobs:
           echo "::stop-commands::$nonce"
           set +e
           timeout --signal=TERM --kill-after=10s 1320s python3 - <<'PY' 2>&1 | tee evidence/research.log
-          import socket
+          import sys
           from pathlib import Path
-          def deny(*args,**kwargs):
-              raise RuntimeError('Network disabled in offline research')
-          socket.socket=deny
-          socket.create_connection=deny
+          def deny_network(event,args):
+              if event.startswith('socket.'):
+                  raise RuntimeError('Network disabled in offline research')
+          sys.addaudithook(deny_network)
+          import socket,ssl
+          for probe in (socket.socket,lambda:socket.getaddrinfo('example.invalid',443)):
+              try:
+                  probe()
+              except RuntimeError as exc:
+                  assert str(exc)=='Network disabled in offline research'
+              else:
+                  raise RuntimeError('Network guard did not block a probe')
+          print('NETWORK_GUARD_PASS: SSL import succeeds; socket creation and DNS blocked')
           from run_entry import run
           raise SystemExit(run(Path('parent'),Path('results')))
           PY
