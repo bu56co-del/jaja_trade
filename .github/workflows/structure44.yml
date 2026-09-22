@@ -1,0 +1,104 @@
+name: Two confirmed peaks on A44 and September
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths: ['structure44/**', '.github/workflows/structure44.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: structure44-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: ${{ github.workspace }}/application:${{ github.workspace }}/application/tests:${{ github.workspace }}/longer:${{ github.workspace }}/execution:${{ github.workspace }}/reversal44:${{ github.workspace }}/alternatives44:${{ github.workspace }}/mean44:${{ github.workspace }}/direction44:${{ github.workspace }}/refine44:${{ github.workspace }}/entry44:${{ github.workspace }}/threshold44:${{ github.workspace }}/crossperiod:${{ github.workspace }}/structure44
+jobs:
+  research:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore pinned cross-period parent and all saved market evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: crossperiod-final-35683448454-1
+          run-id: '35683448454'
+          github-token: ${{ github.token }}
+          path: parent
+      - name: Restore and preserve unchanged account and tested structure source
+        run: |
+          python3 bootstrap.py
+          mkdir -p evidence
+          cp -R application evidence/original-source
+          cp -R structure44 evidence/structure44-source
+          cp .github/workflows/structure44.yml evidence/workflow.yml
+      - name: Account and relevant strategy regressions - artificial fixtures
+        run: |
+          timeout 180s python3 -m unittest discover -s application/tests -v 2>&1 | tee evidence/account-tests.log
+          for module in mean44 refine44 entry44 threshold44 crossperiod; do
+            timeout 120s python3 -m unittest discover -s "$module/tests" -v 2>&1 | tee "evidence/$module-tests.log"
+          done
+      - name: New pivot causality and account tests - artificial fixtures
+        run: timeout 120s python3 -m unittest discover -s structure44/tests -v 2>&1 | tee evidence/structure-tests.log
+      - name: Run all448 cases with socket operations denied
+        id: experiment
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1320s python3 - <<'PY' 2>&1 | tee evidence/research.log
+          import sys
+          def guard(event, args):
+              if event.startswith('socket.'):
+                  raise PermissionError('Network disabled during saved-data research')
+          sys.addaudithook(guard)
+          import ssl, socket
+          for probe in (lambda: socket.socket(), lambda: socket.getaddrinfo('example.invalid',443)):
+              try:
+                  probe()
+              except PermissionError:
+                  pass
+              else:
+                  raise RuntimeError('Offline guard failed')
+          from pathlib import Path
+          from run_structure import run
+          raise SystemExit(run(Path('parent'),Path('results')))
+          PY
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Show only complete results belonging to this run
+        if: always()
+        env:
+          EXPERIMENT_OUTCOME: ${{ steps.experiment.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path('results/SUMMARY.json')
+          text='# No complete validated result\n'
+          if os.environ.get('EXPERIMENT_OUTCOME')=='success' and p.is_file():
+              summary=json.loads(p.read_text())
+              expected={k:os.environ.get(k) for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT')}
+              if summary['provenance']==expected and summary['cases']==448 and summary['baseline_equivalence']==224:
+                  text='# Two-peak paper research\n```json\n'+json.dumps(summary,indent=2)+'\n```\n'
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(text)
+          PY
+      - name: Preserve full input, source, results and failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: structure44-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            results/
+            evidence/
+            parent/
+          retention-days: 7
+          if-no-files-found: error
