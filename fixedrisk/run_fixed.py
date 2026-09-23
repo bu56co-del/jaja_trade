@@ -149,6 +149,23 @@ def protocol():
         new_market_requests=0,orders=0,schedule=False,paid_services=0)
 
 
+
+def check_baseline(row,saved,dataset):
+    """Retain exact ledger equality while applying the parent's dataset label.
+
+    The reusable mean engine labels output A44. crossperiod explicitly labels
+    September after replay. Match that known metadata transformation; never
+    exclude financial or chronological fields from the baseline check.
+    """
+    need(dataset in ('A44','SEPTEMBER'),'Unknown baseline dataset')
+    source='RETROSPECTIVE_DISCONNECTED_A44_MODEL_ONLY'
+    target='SAVED_SEPTEMBER_CROSS_PERIOD_MODEL_ONLY' if dataset=='SEPTEMBER' else source
+    need(row.get('evidence')==source and saved.get('evidence')==target,'Unexpected baseline evidence label')
+    labeled=dict(row,evidence=target)
+    prior.compare_rows(labeled,saved)
+    return labeled
+
+
 def run(root,out):
     root,out=Path(root),Path(out);out.mkdir(parents=True,exist_ok=False)
     rows=[];started=time.monotonic();equiv=0
@@ -169,7 +186,7 @@ def run(root,out):
                                 need(time.monotonic()-started<1260,'Research deadline')
                                 row=replay(b,profile,cost,path,cs,ref)
                                 if profile=='BASE_B':
-                                    prior.compare_rows(row,saved[(group,b['id'],cost,path)]);equiv+=1
+                                    row=check_baseline(row,saved[(group,b['id'],cost,path)],group);equiv+=1
                                 row.update(candidate=profile,dataset=group)
                                 empty={bar['t'] for bar in b['candles'] if bar['n']==0}
                                 row['official_zero_volume_fill_events']=sum(t[k]//60000*60000 in empty for t in row['trades'] for k in ('opened_ms','closed_ms'))
