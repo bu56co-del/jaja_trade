@@ -1,0 +1,57 @@
+name: Chainticks coverage and ETH row audit
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths:
+      - 'data_audit/chainticks_check.py'
+      - 'data_audit/chainticks_followup.py'
+      - '.github/workflows/chainticks-audit.yml'
+permissions:
+  contents: read
+concurrency:
+  group: chainticks-audit
+  cancel-in-progress: false
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Checkout exact revision with no persistent credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Check bounded public-data parsing and validation
+        run: |
+          python3 data_audit/chainticks_check.py --self-test
+          python3 data_audit/chainticks_followup.py --self-test
+      - name: Install a pinned free Parquet decoder in a disposable environment
+        run: |
+          python3 -m venv .audit-venv
+          timeout 120s .audit-venv/bin/python -m pip install --disable-pip-version-check --no-cache-dir --only-binary=:all: --no-deps --index-url https://pypi.org/simple --report /tmp/chainticks-pip-report.json pyarrow==21.0.0
+          .audit-venv/bin/python - <<'PY'
+          import json
+          from pathlib import Path
+          doc=json.loads(Path('/tmp/chainticks-pip-report.json').read_text())
+          print('DECODER_PACKAGE='+json.dumps([{'name':x['metadata']['name'],'version':x['metadata']['version'],'hashes':x['download_info']['archive_info'].get('hashes')} for x in doc['install']]))
+          import pyarrow as pa
+          import pyarrow.parquet as pq
+          from data_audit.chainticks_check import decode
+          output=pa.BufferOutputStream()
+          pq.write_table(pa.Table.from_pylist([{'symbol':'ETH','recorded_at':'2024-01-01T00:00:00Z','mark_price':2000.0,'source_kind':'hypercore_s3'},{'symbol':'BTC','recorded_at':'2024-01-01T00:00:00Z','mark_price':40000.0,'source_kind':'hypercore_s3'}]),output)
+          result=decode(output.getvalue().to_pybytes(),'markets','2024-01-01')
+          assert result['parquet_rows']==2 and result['eth_rows']==1 and result['invalid_counts']=={}
+          print('PARQUET_SYNTHETIC_SMOKE=PASS_NOT_MARKET_EVIDENCE')
+          PY
+      - name: Resolve observed funding and adjacent-day coverage anomalies
+        run: |
+          nonce="$(python3 -c 'import uuid;print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=5s 720s .audit-venv/bin/python -u data_audit/chainticks_followup.py
+          result=$?
+          set -e
+          echo "::$nonce::"
+          exit "$result"

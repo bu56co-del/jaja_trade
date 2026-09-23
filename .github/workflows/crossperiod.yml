@@ -1,0 +1,117 @@
+name: Frozen BB thresholds on saved September history
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths: ['crossperiod/**', '.github/workflows/crossperiod.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: crossperiod-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: ${{ github.workspace }}/application:${{ github.workspace }}/application/tests:${{ github.workspace }}/longer:${{ github.workspace }}/execution:${{ github.workspace }}/reversal44:${{ github.workspace }}/alternatives44:${{ github.workspace }}/mean44:${{ github.workspace }}/direction44:${{ github.workspace }}/refine44:${{ github.workspace }}/entry44:${{ github.workspace }}/threshold44:${{ github.workspace }}/crossperiod
+jobs:
+  research:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore fixed threshold results and A44 regression inputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: threshold44-final-35681103912-1
+          run-id: '35681103912'
+          github-token: ${{ github.token }}
+          path: parent
+      - name: Restore original saved ETH minute history
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: backtest-35452535157-1
+          run-id: '35452535157'
+          github-token: ${{ github.token }}
+          path: september-original
+      - name: Restore saved native minute tail and independent download snapshots
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-prepared-35502377024-1
+          run-id: '35502377024'
+          github-token: ${{ github.token }}
+          path: september-native
+      - name: Restore original source and preserve this run's tested code
+        run: |
+          python3 bootstrap.py
+          mkdir -p evidence
+          cp -R application evidence/original-source
+          cp -R crossperiod evidence/crossperiod-source
+          cp .github/workflows/crossperiod.yml evidence/workflow.yml
+      - name: Run unchanged account and strategy regressions
+        run: |
+          timeout 180s python3 -m unittest discover -s application/tests -v 2>&1 | tee evidence/account-tests.log
+          timeout 120s python3 -m unittest discover -s mean44/tests -v 2>&1 | tee evidence/mean-tests.log
+          timeout 120s python3 -m unittest discover -s refine44/tests -v 2>&1 | tee evidence/refine-tests.log
+          timeout 120s python3 -m unittest discover -s entry44/tests -v 2>&1 | tee evidence/entry-tests.log
+          timeout 120s python3 -m unittest discover -s threshold44/tests -v 2>&1 | tee evidence/threshold-tests.log
+      - name: New source-union and frozen-account tests - artificial fixtures only
+        run: timeout 120s python3 -m unittest discover -s crossperiod/tests -v 2>&1 | tee evidence/crossperiod-tests.log
+      - name: Replay frozen strategies with all socket events denied
+        id: experiment
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1320s python3 - <<'PY' 2>&1 | tee evidence/research.log
+          import sys
+          from pathlib import Path
+          def guard(event,args):
+              if event.startswith('socket.'):
+                  raise PermissionError('Network disabled in offline research')
+          sys.addaudithook(guard)
+          import ssl,socket
+          for probe in (socket.socket,lambda:socket.getaddrinfo('example.invalid',443)):
+              try: probe()
+              except PermissionError: pass
+              else: raise RuntimeError('Offline guard inactive')
+          from run_compare import run
+          raise SystemExit(run(Path('parent'),Path('september-original'),Path('september-native'),Path('results')))
+          PY
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Show only complete matching-run results
+        if: always()
+        env:
+          EXPERIMENT_OUTCOME: ${{ steps.experiment.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          p=Path('results/SUMMARY.json');text='# No complete validated comparison\n'
+          if os.environ.get('EXPERIMENT_OUTCOME')=='success' and p.is_file():
+              s=json.loads(p.read_text())
+              expected={k:os.environ.get(k) for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT')}
+              if s['provenance']==expected and s['new_cases']==8 and s['regression_cases']==216:
+                  text='# Frozen cross-period result\n```json\n'+json.dumps(s,indent=2)+'\n```\n'
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(text)
+          PY
+      - name: Preserve results and complete input provenance including any failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: crossperiod-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            results/
+            evidence/
+            parent/
+            september-original/
+            september-native/
+          retention-days: 7
+          if-no-files-found: error

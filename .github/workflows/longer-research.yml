@@ -1,0 +1,130 @@
+name: Calendar timeframe and exit ablation
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths: ['longer/**', '.github/workflows/longer-research.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: longer-research-${{ github.ref }}
+  cancel-in-progress: false
+env:
+  PYTHONUNBUFFERED: '1'
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONPATH: application:application/tests:research:book_research:mix_research:sweep:longer
+defaults:
+  run:
+    shell: bash
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify unchanged original application
+        run: python3 bootstrap.py
+      - name: Original 372 software regressions
+        run: |
+          mkdir validation
+          timeout --signal=TERM --kill-after=10s 600s bash -eo pipefail -c '
+            for directory in application/tests research/tests book_research/tests mix_research/tests sweep/tests; do
+              python3 -m unittest discover -s "$directory" -v
+            done
+          ' 2>&1 | tee validation/previous-tests.log
+      - name: Native timeframe and ledger tests - artificial fixtures only
+        run: timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s longer/tests -v 2>&1 | tee validation/new-tests.log
+      - name: Freeze dates and six strategies, fetch and independently cross-check data
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 360s python3 longer/run_long.py prepare --out prepared 2>&1 | tee validation/download.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Preserve code and logs even after failure
+        if: always()
+        run: |
+          mkdir -p prepared/source
+          if [ -d application ]; then cp -R application prepared/source/application; fi
+          cp -R longer prepared/source/longer
+          if [ -d validation ]; then cp -R validation prepared/validation; fi
+          cp .github/workflows/longer-research.yml prepared/workflow.yml
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared/
+          retention-days: 14
+          if-no-files-found: warn
+  compute:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        tf: ['1m', '5m', '15m']
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 bootstrap.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared
+      - name: Run all fixed strategy, cost, path and calendar cases
+        env:
+          TIMEFRAME: ${{ matrix.tf }}
+        run: timeout --signal=TERM --kill-after=10s 960s python3 longer/run_long.py compute --prepared prepared --tf "$TIMEFRAME" --out result
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-shard-${{ matrix.tf }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: result/
+          retention-days: 14
+          if-no-files-found: warn
+  aggregate:
+    needs: [prepare, compute]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 bootstrap.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: native-shard-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: downloads
+          merge-multiple: false
+      - name: Require all 264 scenarios and matching run identity
+        run: |
+          mkdir results
+          for tf in 1m 5m 15m; do
+            src="downloads/native-shard-$tf-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            if [ -d "$src" ]; then mv "$src" "results/$tf"; fi
+          done
+          timeout --signal=TERM --kill-after=10s 300s python3 longer/run_long.py aggregate --prepared prepared --results results --out final
+          cat final/REPORT.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Explicit incomplete status, not a profit/loss result
+        if: failure()
+        run: echo '# Research incomplete; no validated result. Read failed job and preserved evidence.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: native-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: final/
+          retention-days: 14
+          if-no-files-found: warn

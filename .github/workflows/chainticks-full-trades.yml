@@ -1,0 +1,113 @@
+name: Chainticks all 93 trade days - data audit only
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths:
+      - 'data_audit/trades_full_audit.py'
+      - '.github/workflows/chainticks-full-trades.yml'
+permissions:
+  contents: read
+concurrency:
+  group: chainticks-full-trades-audit
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install hash-pinned free decoder without source builds
+        run: |
+          python3 -m venv .audit-venv
+          printf '%s\n' 'pyarrow==21.0.0 --hash=sha256:b7ae0bbdc8c6674259b25bef5d2a1d6af5d39d7200c819cf99e07f7dfef1c51e' > /tmp/audit-requirements.txt
+          timeout 120s .audit-venv/bin/python -m pip --isolated install --disable-pip-version-check --no-cache-dir --only-binary=:all: --no-deps --require-hashes --index-url https://pypi.org/simple -r /tmp/audit-requirements.txt
+      - name: Verify parser, duplicate handling, privacy and actual Parquet decoding
+        run: |
+          mkdir -p test-evidence
+          cp data_audit/trades_full_audit.py test-evidence/
+          cp .github/workflows/chainticks-full-trades.yml test-evidence/
+          .audit-venv/bin/python data_audit/trades_full_audit.py --self-test 2>&1 | tee test-evidence/tests.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: ct93-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-evidence/
+          retention-days: 7
+          if-no-files-found: warn
+  audit:
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 6
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Install the same hash-pinned decoder
+        run: |
+          python3 -m venv .audit-venv
+          printf '%s\n' 'pyarrow==21.0.0 --hash=sha256:b7ae0bbdc8c6674259b25bef5d2a1d6af5d39d7200c819cf99e07f7dfef1c51e' > /tmp/audit-requirements.txt
+          timeout 120s .audit-venv/bin/python -m pip --isolated install --disable-pip-version-check --no-cache-dir --only-binary=:all: --no-deps --require-hashes --index-url https://pypi.org/simple -r /tmp/audit-requirements.txt
+      - name: Read every published file for the assigned dates
+        env:
+          AUDIT_SHARD: ${{ matrix.shard }}
+        run: |
+          mkdir -p audit-output
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1380s .audit-venv/bin/python -u data_audit/trades_full_audit.py --shard "$AUDIT_SHARD" --out audit-output 2>&1 | tee audit-output/run.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Preserve market-only aggregates and all failure evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ct93-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: audit-output/
+          retention-days: 7
+          if-no-files-found: error
+  combine:
+    needs: [tests, audit]
+    if: ${{ always() && needs.tests.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore only shards from this workflow run
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: ct93-shard-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: audit-shards
+      - name: Require all 93 dates and identical run provenance
+        run: |
+          mkdir -p full-audit
+          python3 data_audit/trades_full_audit.py --combine audit-shards --out full-audit 2>&1 | tee full-audit/combine.log
+          cp data_audit/trades_full_audit.py full-audit/
+          cp .github/workflows/chainticks-full-trades.yml full-audit/
+      - name: Preserve combined report and reproducible market-data evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ct93-full-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            full-audit/
+            audit-shards/
+          retention-days: 7
+          if-no-files-found: error

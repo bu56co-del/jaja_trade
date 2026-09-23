@@ -1,0 +1,165 @@
+name: A44 economic entry stop payoff research
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths:
+      - 'profit44/**'
+      - '.github/workflows/profit44.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: profit44-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: application:application/tests:research:book_research:mix_research:sweep:longer:execution:reversal44:profit44
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Verify and unpack original reviewed application without networking
+        run: |
+          python3 bootstrap.py
+          mkdir -p test-evidence
+          cp -R application test-evidence/original-source
+          cp -R longer test-evidence/native-source
+          cp -R execution test-evidence/execution-source
+          cp -R reversal44 test-evidence/reversal44-source
+          cp -R profit44 test-evidence/profit44-source
+          cp evidence/source-manifest.json test-evidence/
+          cp .github/workflows/profit44.yml test-evidence/workflow.yml
+      - name: All prior 528 software regressions
+        run: |
+          for folder in application research book_research mix_research sweep longer execution reversal44; do
+            echo "TEST_FOLDER=$folder" | tee -a test-evidence/prior-tests.log
+            timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s "$folder/tests" -v 2>&1 | tee -a test-evidence/prior-tests.log
+          done
+      - name: New causal setup and independent accounting tests - artificial fixtures only
+        run: timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s profit44/tests -v 2>&1 | tee test-evidence/new-tests.log
+      - name: Keep code and actual test logs even on failure
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: profit44-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-evidence/
+          retention-days: 7
+          if-no-files-found: error
+  research:
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        group: [0, 1, 2, 3]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore fixed A44 data and previous baseline results
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: falsebreak44-final-35525531802-1
+          run-id: '35525531802'
+          github-token: ${{ github.token }}
+          path: previous
+      - name: Restore unchanged accounting engine
+        run: python3 bootstrap.py
+      - name: Run every assigned hypothesis on all 27 contiguous A44 episodes
+        env:
+          GROUP_NUMBER: ${{ matrix.group }}
+        run: |
+          nonce="$(python3 -c 'import uuid;print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1380s python3 profit44/run_profit.py --group "$GROUP_NUMBER" --previous previous --out group-output 2>&1 | tee group.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Preserve diagnostics without a stale result fallback
+        if: always()
+        run: |
+          mkdir -p group-output
+          if test -f group.log; then cp group.log group-output/run.log; fi
+      - name: Save assigned scenarios including failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: profit44-group-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: group-output/
+          retention-days: 7
+          if-no-files-found: error
+  combine:
+    needs: [tests, research]
+    if: ${{ always() && needs.tests.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 bootstrap.py
+      - name: Retrieve only current-run group outputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: profit44-group-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: final-evidence/groups
+      - name: Retrieve current-run source and test evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: profit44-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: final-evidence/tests
+      - name: Preserve original market-data evidence without re-downloading market prices
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: falsebreak44-final-35525531802-1
+          run-id: '35525531802'
+          github-token: ${{ github.token }}
+          path: final-evidence/previous
+      - name: Verify all 2592 episodes before aggregating separate hypothetical accounts
+        id: aggregate
+        run: |
+          nonce="$(python3 -c 'import uuid;print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 300s python3 profit44/run_profit.py --combine final-evidence/groups --out final-evidence/results 2>&1 | tee final-evidence/combine.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Display only a completed result from this exact run
+        if: always()
+        env:
+          AGGREGATE_OUTCOME: ${{ steps.aggregate.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          p=Path('final-evidence/results/SUMMARY.json')
+          text='# A44 study: no complete validated result.\n'
+          if os.environ.get('AGGREGATE_OUTCOME')=='success' and p.is_file():
+              s=json.loads(p.read_text())
+              if s['cases']==2592 and all(s['provenance'][k]==os.environ[k] for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT')):
+                  text='# A44 retrospective model study\n\n27 independent 10 USDC episodes; NOT a continuous 10 USDC account.\n\n```json\n'+json.dumps(s,indent=2)+'\n```\n'
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(text)
+          print(text)
+          PY
+      - name: Save complete inputs, code, logs, trades and comparisons
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: profit44-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: final-evidence/
+          retention-days: 7
+          if-no-files-found: error

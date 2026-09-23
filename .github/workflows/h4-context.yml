@@ -1,0 +1,143 @@
+name: A44 4h-context 15m-decision comparison
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths: ['timeframe44/**', '.github/workflows/h4-context.yml']
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: h4-comparison-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: ${{ github.workspace }}/application:${{ github.workspace }}/application/tests:${{ github.workspace }}/longer:${{ github.workspace }}/execution:${{ github.workspace }}/reversal44:${{ github.workspace }}/alternatives44:${{ github.workspace }}/mean44:${{ github.workspace }}/direction44:${{ github.workspace }}/refine44:${{ github.workspace }}/timeframe44
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: refine44-final-35602620940-1
+          run-id: '35602620940'
+          github-token: ${{ github.token }}
+          path: parent
+      - name: Restore unchanged engine and preserve actual tested code
+        run: |
+          python3 bootstrap.py
+          mkdir -p tests
+          cp -R application tests/original-source
+          cp -R timeframe44 tests/timeframe44-source
+          cp .github/workflows/h4-context.yml tests/workflow.yml
+      - name: Existing account and relevant strategy regressions
+        run: |
+          timeout 300s python3 -m unittest discover -s application/tests -v 2>&1 | tee tests/account.log
+          timeout 120s python3 -m unittest discover -s mean44/tests -v 2>&1 | tee tests/mean.log
+          timeout 120s python3 -m unittest discover -s refine44/tests -v 2>&1 | tee tests/refine.log
+      - name: New context-causality hold and independent-account tests
+        run: timeout 180s python3 -m unittest discover -s timeframe44/tests -v 2>&1 | tee tests/new.log
+      - name: Validate A44 and obtain anonymous official4h warmup context
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout 240s python3 timeframe44/run_h4.py --prepare --parent parent --out context 2>&1 | tee prepare.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: h4-prepare-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            context/
+            tests/
+            prepare.log
+          retention-days: 7
+          if-no-files-found: error
+  research:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix:
+        group: [0,1,2]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: refine44-final-35602620940-1
+          run-id: '35602620940'
+          github-token: ${{ github.token }}
+          path: parent
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: h4-prepare-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared
+      - run: python3 bootstrap.py
+      - name: Replay full accounts on all44 selected dates
+        env:
+          GROUP: ${{ matrix.group }}
+        run: timeout --signal=TERM --kill-after=10s 1380s python3 timeframe44/run_h4.py --group "$GROUP" --parent parent --context prepared/context/market --out output 2>&1 | tee run.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: h4-group-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            output/
+            run.log
+          retention-days: 7
+          if-no-files-found: error
+  combine:
+    needs: research
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: h4-group-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: groups
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: h4-prepare-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: refine44-final-35602620940-1
+          run-id: '35602620940'
+          github-token: ${{ github.token }}
+          path: parent
+      - name: Collect every case without inventing missing outcomes
+        run: |
+          python3 bootstrap.py
+          mkdir flat-groups
+          for d in groups/*; do ln -s "../$d/output" "flat-groups/$(basename "$d")"; done
+          python3 timeframe44/run_h4.py --combine flat-groups --out results 2>&1 | tee combine.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: h4-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            results/
+            groups/
+            prepared/
+            parent/
+            combine.log
+          retention-days: 7
+          if-no-files-found: error

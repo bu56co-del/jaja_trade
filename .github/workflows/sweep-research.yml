@@ -1,0 +1,166 @@
+name: Exhaustive finite mixed-strategy research
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths:
+      - 'sweep/**'
+      - '.github/workflows/sweep-research.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: finite-sweep-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: application:application/tests:research:book_research:mix_research:sweep
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore exact previously published public evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: mixed-35493697852-1
+          run-id: '35493697852'
+          github-token: ${{ github.token }}
+          path: previous-evidence
+      - name: Verify unchanged original application
+        run: python3 bootstrap.py
+      - name: Original and previous 338 software regressions
+        run: |
+          for directory in application/tests research/tests book_research/tests mix_research/tests; do
+            timeout --signal=TERM --kill-after=10s 300s python3 -m unittest discover -s "$directory" -v
+          done 2>&1 | tee evidence/previous-tests.log
+      - name: Enumeration, causality, equivalence and complete-coverage software tests
+        run: timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s sweep/tests -v 2>&1 | tee evidence/sweep-tests.log
+      - name: Freeze every candidate, verify prior data, acquire new data, independently verify every policy
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 600s python3 sweep/pipeline.py prepare --previous previous-evidence --application application --out prepared 2>&1 | tee evidence/prepare.log
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$code"
+      - name: Preserve exact code, test logs, raw inputs and prior evidence
+        if: always()
+        run: |
+          mkdir -p prepared/source prepared/validation
+          cp -R sweep research book_research mix_research prepared/source/
+          if [ -d application ]; then cp -R application prepared/source/; fi
+          cp .github/workflows/sweep-research.yml prepared/source/workflow.yml
+          if [ -d evidence ]; then cp -R evidence/. prepared/validation/; fi
+          if [ -d previous-evidence ]; then cp -R previous-evidence prepared/previous; fi
+          python3 -c "from pathlib import Path; from pipeline import manifest; manifest(Path('prepared'))"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sweep-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared/
+          retention-days: 14
+          if-no-files-found: error
+  compute:
+    needs: prepare
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        shard: [0,1,2,3,4,5,6,7]
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: application:application/tests:research:book_research:mix_research:sweep
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 bootstrap.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: sweep-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared
+      - name: Replay every assigned exact decision stream and independently audit its ledger
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1320s python3 sweep/pipeline.py worker --prepared prepared --shard "$SHARD" --out shard-output 2>&1 | tee execution.log
+          code=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$code"
+      - name: Preserve partial outputs even on failure
+        if: always()
+        run: |
+          mkdir -p shard-output
+          if [ -f execution.log ]; then cp execution.log shard-output/; fi
+          python3 -c "from pathlib import Path; from pipeline import manifest; manifest(Path('shard-output'))"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sweep-shard-${{ matrix.shard }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: shard-output/
+          retention-days: 14
+          if-no-files-found: error
+  aggregate:
+    needs: [prepare,compute]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: application:application/tests:research:book_research:mix_research:sweep
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 bootstrap.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: sweep-prepared-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prepared
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: sweep-shard-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: downloads
+          merge-multiple: false
+      - name: Require all eight complete shards and every candidate scenario
+        run: |
+          mkdir results
+          for n in 0 1 2 3 4 5 6 7; do
+            src="downloads/sweep-shard-$n-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+            if [ -d "$src" ]; then mv "$src" "results/shard-$n"; fi
+          done
+          timeout --signal=TERM --kill-after=10s 300s python3 sweep/pipeline.py aggregate --prepared prepared --results results --out final
+      - name: Explicit failure summary
+        if: failure()
+        run: echo 'INCOMPLETE — not all required checks/shards/results passed. No profitability conclusion.' >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: sweep-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: final/
+          retention-days: 14
+          if-no-files-found: warn

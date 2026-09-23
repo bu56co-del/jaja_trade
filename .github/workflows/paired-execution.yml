@@ -1,0 +1,96 @@
+name: Paired signal and execution research
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths:
+      - 'execution/**'
+      - '.github/workflows/paired-execution.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: paired-execution-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  paired:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    defaults:
+      run:
+        shell: bash
+    env:
+      PYTHONUNBUFFERED: '1'
+      PYTHONDONTWRITEBYTECODE: '1'
+      PYTHONPATH: application:application/tests:research:book_research:mix_research:sweep:longer:execution
+    steps:
+      - name: Checkout exact commit without persistent credentials
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore pinned saved public market data
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-prepared-35502377024-1
+          run-id: '35502377024'
+          github-token: ${{ github.token }}
+          path: prior-inputs
+      - name: Restore prior baseline results for paired equivalence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: native-final-35502377024-1
+          run-id: '35502377024'
+          github-token: ${{ github.token }}
+          path: prior-results
+      - name: Verify original source and preserve exact inputs and code
+        run: |
+          python3 bootstrap.py
+          cp -R application evidence/original-source
+          cp -R longer evidence/native-source
+          cp -R execution evidence/execution-source
+          cp -R prior-inputs evidence/prior-inputs
+          cp -R prior-results evidence/prior-results
+          cp .github/workflows/paired-execution.yml evidence/workflow.yml
+      - name: Prior 431 software regressions
+        run: |
+          for folder in application research book_research mix_research sweep longer; do
+            timeout --signal=TERM --kill-after=10s 300s python3 -m unittest discover -s "$folder/tests" -v 2>&1 | tee -a evidence/previous-tests.log
+          done
+      - name: Paired execution, cap, causality and independent ledger tests
+        run: timeout --signal=TERM --kill-after=10s 180s python3 -m unittest discover -s execution/tests -v 2>&1 | tee evidence/paired-tests.log
+      - name: Run all 36 fixed paired scenarios - no new network calls
+        id: experiment
+        run: |
+          nonce="$(python3 -c 'import uuid; print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 720s python3 execution/run_paired.py --prior prior-inputs --prior-final prior-results --out evidence/paired 2>&1 | tee evidence/paired.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - name: Show only a complete result from this exact run
+        if: always()
+        env:
+          EXPERIMENT_OUTCOME: ${{ steps.experiment.outcome }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          from pathlib import Path
+          root=Path('evidence/paired')
+          text='# No completed validated result.\n'
+          if os.environ.get('EXPERIMENT_OUTCOME')=='success' and (root/'SUMMARY.json').is_file():
+              s=json.loads((root/'SUMMARY.json').read_text())
+              p=s['provenance']
+              if s['cases']==36 and all(p[k]==os.environ[k] for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT')):
+                  text=(root/'REPORT.md').read_text()
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text(text)
+          print(text)
+          PY
+      - name: Preserve all evidence including failure logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: paired-${{ github.run_id }}-${{ github.run_attempt }}
+          path: evidence/
+          retention-days: 14
+          if-no-files-found: warn

@@ -1,0 +1,139 @@
+name: A44 complete-account direction ablation
+on:
+  push:
+    branches: [research/issue-1-chat-actions]
+    paths:
+      - 'direction44/**'
+      - '.github/workflows/direction44.yml'
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: direction44-${{ github.ref }}
+  cancel-in-progress: false
+defaults:
+  run:
+    shell: bash
+env:
+  PYTHONDONTWRITEBYTECODE: '1'
+  PYTHONUNBUFFERED: '1'
+  PYTHONPATH: application:application/tests:research:book_research:mix_research:sweep:longer:execution:reversal44:profit44:alternatives44:mean44:direction44
+jobs:
+  tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore verified original source and preserve new source
+        run: |
+          python3 bootstrap.py
+          mkdir -p test-evidence
+          cp -R application test-evidence/original-source
+          cp -R mean44 test-evidence/mean44-source
+          cp -R direction44 test-evidence/direction44-source
+          cp evidence/source-manifest.json test-evidence/
+          cp .github/workflows/direction44.yml test-evidence/workflow.yml
+      - name: Targeted parent43 and new10 tests - artificial fixtures only
+        run: |
+          python3 -m unittest discover -s mean44/tests -v 2>&1 | tee test-evidence/mean-tests.log
+          python3 -m unittest discover -s direction44/tests -v 2>&1 | tee test-evidence/direction-tests.log
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: direction44-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-evidence/
+          retention-days: 7
+          if-no-files-found: warn
+  research:
+    needs: tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      max-parallel: 2
+      matrix:
+        group: [0, 1]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - name: Restore corrected and version-pinned prior result
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: mean44-final-35598241627-1
+          run-id: '35598241627'
+          github-token: ${{ github.token }}
+          path: previous
+      - run: python3 bootstrap.py
+      - name: Replay each allowed-direction rule from the original episode start
+        env:
+          RESEARCH_GROUP: ${{ matrix.group }}
+        run: |
+          mkdir -p run-evidence
+          nonce="$(python3 -c 'import uuid;print(uuid.uuid4())')"
+          echo "::stop-commands::$nonce"
+          set +e
+          timeout --signal=TERM --kill-after=10s 1380s python3 direction44/run_direction.py --group "$RESEARCH_GROUP" --previous previous --out run-evidence/results 2>&1 | tee run-evidence/run.log
+          result=${PIPESTATUS[0]}
+          set -e
+          echo "::$nonce::"
+          exit "$result"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: direction44-group-${{ matrix.group }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: run-evidence/
+          retention-days: 7
+          if-no-files-found: error
+  combine:
+    needs: [tests, research]
+    if: ${{ always() && needs.tests.result == 'success' }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          persist-credentials: false
+      - run: python3 bootstrap.py
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: direction44-group-*-${{ github.run_id }}-${{ github.run_attempt }}
+          path: groups
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: direction44-tests-${{ github.run_id }}-${{ github.run_attempt }}
+          path: tests
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: mean44-final-35598241627-1
+          run-id: '35598241627'
+          github-token: ${{ github.token }}
+          path: previous
+      - name: Require all648 cases and216 exact BOTH regressions
+        run: |
+          mkdir -p normalized-groups
+          for folder in groups/*; do
+            cp -R "$folder/results" "normalized-groups/$(basename "$folder")"
+          done
+          python3 direction44/run_direction.py --combine normalized-groups --out results 2>&1 | tee combine.log
+          python3 - <<'PY'
+          import json,os
+          from pathlib import Path
+          s=json.loads(Path('results/SUMMARY.json').read_text())
+          assert all(s['provenance'][k]==os.environ[k] for k in ('GITHUB_SHA','GITHUB_RUN_ID','GITHUB_RUN_ATTEMPT'))
+          Path(os.environ['GITHUB_STEP_SUMMARY']).write_text('# A44 direction ablation\n\n```json\n'+json.dumps(s,indent=2)+'\n```\n')
+          PY
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: direction44-final-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            results/
+            groups/
+            tests/
+            previous/
+            combine.log
+          retention-days: 7
+          if-no-files-found: error

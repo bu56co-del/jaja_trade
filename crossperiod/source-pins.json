@@ -1,0 +1,26 @@
+{
+  "artifacts": [
+    {
+      "run": 35452535157,
+      "artifact": 10587127973,
+      "commit": "4cc3aa9239383a5a07e4f3305a9b2b17f61c9e57",
+      "zip_sha256": "56d9bfb21caee1a0dc2bc72f4c8a18cd751294389e6bb11911622fbf73fc60ce"
+    },
+    {
+      "run": 35502377024,
+      "artifact": 10602727240,
+      "commit": "e5d8746973ee748a90b05e7aaa91c6287c334a3e",
+      "zip_sha256": "62bc0808ceffc50d95df526eb0a1f641929686fc75929cb08f35e90a878b1d06"
+    }
+  ],
+  "original": {
+    "github-provenance.json": "50afbad4a6fd409fbe05378ace326eff952287ef2b397406d66aa286525c70b6",
+    "experiment/dataset.json": "0ee0c2d01af65fe09a72353633a45ca2994a4d47e084cd2a3b555cc215d2f738",
+    "experiment/attempts/71e11c05be254544ab7cdc1da3928418/raw/requests.jsonl": "f1001fdf1d3be02d4e93d33e884fde3598f9ad554fddbc058d4d35310775cfa0"
+  },
+  "native": {
+    "ready.json": "fece661d394e456f19d5e5ecb1ea20224a723511b258817e0373a93848f66bfd",
+    "manifest.json": "f5c1c5d826a98976ec1d718a5b951eea64727ae0d2c27885597fc8501dac862b",
+    "frozen.json": "0ff4dcc5f9a04f0e9cd538b8b4df24db01db190a4e3cbcd27cfbae363fa7d486"
+  }
+}
